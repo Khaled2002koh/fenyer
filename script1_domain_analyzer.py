@@ -16,6 +16,7 @@ import json
 import time
 import os
 import sys
+import warnings
 from urllib.parse import urljoin, urlparse, parse_qs, urlunparse
 from bs4 import BeautifulSoup
 from collections import defaultdict
@@ -26,6 +27,9 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 import colorama
 from colorama import Fore, Style
+
+# Disable SSL warnings for cleaner output
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 # Initialize colorama
 colorama.init()
