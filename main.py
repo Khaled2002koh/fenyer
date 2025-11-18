@@ -67,7 +67,12 @@ def main():
     
     if args.script == 'all' or args.script == '4':
         print("\n🚀 Running Script 4: Wayback Machine Discovery")
-        os.system(f"python3 script4_wayback.py {args.domain} --output {output_dir}")
+        result = os.system(f"python3 script4_wayback.py {args.domain} --output {output_dir}")
+        
+        # If Wayback script fails, try the simple version
+        if result != 0:
+            print("\n⚠️  Wayback Machine failed, trying simple URL generation...")
+            os.system(f"python3 script4_wayback_simple.py {args.domain} --output {output_dir}")
     
     print("\n✅ Reconnaissance completed!")
     print(f"📊 Results saved in: {output_dir.absolute()}")
