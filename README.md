@@ -40,12 +40,13 @@ Subdomain Discovery: Extracts subdomains from historical data
 #### 📦 Installation
 ```
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/Khaled2002koh/fenyer.git
 cd recon_tool
 
 # Install dependencies
 pip install -r requirements.txt
-
+# hint:
+if you have problem with requirements instalation try install it manualy
 # Make scripts executable (Linux/Mac)
 chmod +x *.py
 ```
@@ -207,5 +208,6 @@ email: pipodzarmy@gmail.com
 Check the troubleshooting section
 Review the documentation
 Create detailed issue reports
+
 
 **⚠️ Disclaimer: This tool is for authorized security testing only. Users must ensure they have proper permission before testing any systems. The authors are not responsible for misuse of this software.**
