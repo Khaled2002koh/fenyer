@@ -466,7 +466,7 @@ class IDORCacheAnalyzer:
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
             task = progress.add_task("Analyzing endpoints...", total=len(endpoints_list))
             
-            with ThreadPoolExecutor(max_workers=10) as executor:
+            with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = [executor.submit(self.analyze_endpoint, endpoint) for endpoint in endpoints_list]
                 
                 for future in as_completed(futures):
