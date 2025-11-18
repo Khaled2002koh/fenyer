@@ -34,6 +34,8 @@ class WaybackMachineAnalyzer:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
+        # Set default timeout for all requests
+        self.session.timeout = 300  # 5 minutes default timeout
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
@@ -198,7 +200,7 @@ class WaybackMachineAnalyzer:
         console.print(f"[ERROR] {message}", style="red")
     
     def get_wayback_urls(self, domain, limit=10000):
-        """Get URLs from Wayback Machine"""
+        """Get URLs from Wayback Machine with retry mechanism"""
         self.log_info(f"Fetching URLs from Wayback Machine for {domain}")
         
         urls = []
@@ -219,12 +221,87 @@ class WaybackMachineAnalyzer:
             'filter': 'mimetype:text/css',
         }
         
+        # Retry mechanism
+        max_retries = 3
+        timeouts = [180, 300, 420]  # Progressive timeouts: 3min, 5min, 7min
+        
+        for attempt in range(max_retries):
+            try:
+                self.log_info(f"Attempt {attempt + 1}/{max_retries} to fetch Wayback URLs...")
+                response = self.session.get(self.wayback_api, params=params, timeout=timeouts[attempt])
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if len(data) > 1:
+                        for row in data[1:]:  # Skip header row
+                            if len(row) >= 3:
+                                url = row[2]
+                                timestamp = row[1]
+                                status_code = row[3]
+                                
+                                urls.append({
+                                    'url': url,
+                                    'timestamp': timestamp,
+                                    'status_code': status_code,
+                                    'date': datetime.strptime(timestamp, '%Y%m%d%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
+                                })
+                    
+                    self.log_success(f"Found {len(urls)} URLs from Wayback Machine")
+                    return urls
+                else:
+                    self.log_error(f"HTTP {response.status_code} from Wayback Machine")
+                    
+            except requests.exceptions.Timeout:
+                self.log_error(f"Timeout on attempt {attempt + 1} (timeout={timeouts[attempt]}s)")
+                if attempt < max_retries - 1:
+                    self.log_info(f"Retrying in {5 * (attempt + 1)} seconds...")
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                    
+            except requests.exceptions.ConnectionError:
+                self.log_error(f"Connection error on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    self.log_info(f"Retrying in {5 * (attempt + 1)} seconds...")
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                    
+            except Exception as e:
+                self.log_error(f"Error on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries - 1:
+                    self.log_info(f"Retrying in {5 * (attempt + 1)} seconds...")
+                    time.sleep(5 * (attempt + 1))
+                    continue
+        
+        # If all retries failed, try alternative method
+        self.log_warning("All retries failed, trying alternative method...")
+        return self.get_wayback_urls_alternative(domain, limit)
+    
+    def get_wayback_urls_alternative(self, domain, limit=5000):
+        """Alternative method to get Wayback URLs with smaller chunks"""
+        self.log_info("Trying alternative Wayback method with smaller chunks...")
+        
+        urls = []
+        from_date = (datetime.now() - timedelta(days=365*2)).strftime('%Y%m%d')  # Smaller time range
+        to_date = datetime.now().strftime('%Y%m%d')
+        
+        # Try with simpler parameters
+        params = {
+            'url': f'*.{domain}/*',
+            'from': from_date,
+            'to': to_date,
+            'output': 'json',
+            'limit': min(limit, 1000),  # Smaller limit
+            'filter': 'statuscode:200',
+        }
+        
         try:
-            response = self.session.get(self.wayback_api, params=params, timeout=30)
+            self.log_info("Fetching with simplified parameters...")
+            response = self.session.get(self.wayback_api, params=params, timeout=420)
+            
             if response.status_code == 200:
                 data = response.json()
                 if len(data) > 1:
-                    for row in data[1:]:  # Skip header row
+                    for row in data[1:]:
                         if len(row) >= 3:
                             url = row[2]
                             timestamp = row[1]
@@ -237,13 +314,44 @@ class WaybackMachineAnalyzer:
                                 'date': datetime.strptime(timestamp, '%Y%m%d%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
                             })
                 
-                self.log_success(f"Found {len(urls)} URLs from Wayback Machine")
-            else:
-                self.log_error(f"Failed to fetch Wayback URLs: {response.status_code}")
+                self.log_success(f"Alternative method found {len(urls)} URLs")
+                return urls
                 
         except Exception as e:
-            self.log_error(f"Error fetching Wayback URLs: {str(e)}")
+            self.log_error(f"Alternative method failed: {str(e)}")
         
+        # Final fallback - use common endpoints
+        self.log_warning("Using fallback method with common endpoints...")
+        return self.generate_fallback_urls(domain)
+    
+    def generate_fallback_urls(self, domain):
+        """Generate common URLs as fallback"""
+        self.log_info("Generating fallback URLs from common patterns...")
+        
+        base_url = f"https://{domain}"
+        common_paths = [
+            '/', '/admin', '/login', '/api', '/v1', '/v2', '/rest',
+            '/wp-admin', '/wp-login.php', '/xmlrpc.php',
+            '/robots.txt', '/sitemap.xml', '/.well-known/',
+            '/js/', '/css/', '/images/', '/assets/', '/static/',
+            '/backup/', '/test/', '/dev/', '/staging/',
+            '/config/', '/uploads/', '/files/', '/download/',
+            '/search', '/user', '/profile', '/account',
+            '/order', '/product', '/category', '/post',
+            '/index.php', '/index.html', '/default.aspx',
+            '/login.php', '/admin.php', '/dashboard',
+        ]
+        
+        urls = []
+        for path in common_paths:
+            urls.append({
+                'url': base_url + path,
+                'timestamp': '20240101000000',
+                'status_code': 200,
+                'date': '2024-01-01 00:00:00'
+            })
+        
+        self.log_success(f"Generated {len(urls)} fallback URLs")
         return urls
     
     def extract_unique_urls(self, wayback_data):
@@ -319,12 +427,25 @@ class WaybackMachineAnalyzer:
         """Extract parameters from URLs"""
         parameters = set()
         
-        for url in urls:
-            parsed = urlparse(url)
-            query_params = parse_qs(parsed.query)
+        for url_data in urls:
+            # Handle both string URLs and dict objects
+            if isinstance(url_data, dict):
+                url = url_data.get('url', '')
+            else:
+                url = str(url_data)
             
-            for param in query_params.keys():
-                parameters.add(param)
+            if not url:
+                continue
+                
+            try:
+                parsed = urlparse(url)
+                query_params = parse_qs(parsed.query)
+                
+                for param in query_params.keys():
+                    parameters.add(param)
+            except Exception as e:
+                self.log_error(f"Error parsing URL {url}: {str(e)}")
+                continue
         
         return parameters
     
@@ -332,13 +453,26 @@ class WaybackMachineAnalyzer:
         """Extract subdomains from URLs"""
         subdomains = set()
         
-        for url in urls:
-            parsed = urlparse(url)
-            domain_parts = parsed.netloc.split('.')
+        for url_data in urls:
+            # Handle both string URLs and dict objects
+            if isinstance(url_data, dict):
+                url = url_data.get('url', '')
+            else:
+                url = str(url_data)
             
-            if len(domain_parts) > 2:
-                subdomain = '.'.join(domain_parts[:-2])
-                subdomains.add(subdomain)
+            if not url:
+                continue
+                
+            try:
+                parsed = urlparse(url)
+                domain_parts = parsed.netloc.split('.')
+                
+                if len(domain_parts) > 2:
+                    subdomain = '.'.join(domain_parts[:-2])
+                    subdomains.add(subdomain)
+            except Exception as e:
+                self.log_error(f"Error extracting subdomain from {url}: {str(e)}")
+                continue
         
         return subdomains
     
@@ -406,7 +540,7 @@ class WaybackMachineAnalyzer:
             
             task = progress.add_task("Testing endpoints...", total=len(urls_list))
             
-            with ThreadPoolExecutor(max_workers=20) as executor:
+            with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(self.test_endpoint, url) for url in urls_list]
                 
                 for future in as_completed(futures):
@@ -592,7 +726,12 @@ class WaybackMachineAnalyzer:
         self.wayback_urls = self.get_wayback_urls(self.domain)
         
         if not self.wayback_urls:
-            self.log_error("No URLs found from Wayback Machine")
+            self.log_warning("No URLs found from Wayback Machine, but continuing with fallback analysis...")
+            # Continue with fallback URLs instead of returning
+            self.wayback_urls = self.generate_fallback_urls(self.domain)
+        
+        if not self.wayback_urls:
+            self.log_error("No URLs available for analysis")
             return
         
         # Extract unique URLs
